@@ -55,15 +55,33 @@ export default {
 		let expire = Math.floor(timestamp / 1000);
 		SUBUpdateTime = env.SUBUPTIME || SUBUpdateTime;
 
-		const pathToken = url.pathname.startsWith('/') ? url.pathname.slice(1).split('?')[0].split('/')[0] : url.pathname.split('?')[0].split('/')[0];
-		const isValidToken = token && [mytoken, fakeToken, 访客订阅].includes(token);
-		// 检查是否是UUID路径（如 uuid-1, uuid-2等，或标准UUID格式）
-		const isUuidPath = pathToken && (/^uuid-\d+$/i.test(pathToken) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathToken));
-		// 检查是否是SUBX路径（如 SUB1, SUB2等）
-		const isSubXPath = pathToken && /^SUB\d+$/i.test(pathToken);
-		const isValidPath = pathToken && (pathToken === mytoken || pathToken === 访客订阅 || url.pathname.startsWith('/' + mytoken) || url.pathname.startsWith('/' + 访客订阅) || isSubXPath || isUuidPath);
+		// 从KV获取所有token列表（多订阅支持）
+		let validTokens = [mytoken, fakeToken, 访客订阅];
+		if (env.KV) {
+			const tokenList = await env.KV.get('TOKEN_LIST');
+			if (tokenList) {
+				const tokens = tokenList.split('\n').filter(t => t.trim());
+				validTokens = [...validTokens, ...tokens];
+			}
+		}
+
+		// 从pathname提取token（支持 /token 格式）
+		let pathToken = null;
+		if (url.pathname && url.pathname.length > 1) {
+			pathToken = url.pathname.substring(1).split('?')[0];
+			// 如果pathToken在有效token列表中，使用它作为token
+			if (validTokens.includes(pathToken)) {
+				token = pathToken;
+			}
+		}
+
+		// 检查是否为有效token（包括pathname匹配）
+		const isValidToken = validTokens.includes(token) || 
+			validTokens.includes(pathToken) || 
+			url.pathname == ("/" + mytoken) || 
+			url.pathname.includes("/" + mytoken + "?");
 		
-		if (!(isValidToken || isValidPath)) {
+		if (!isValidToken) {
 			if (TG == 1 && url.pathname !== "/" && url.pathname !== "/favicon.ico") await sendMessage(`#异常访问 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgent}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
 			if (env.URL302) return Response.redirect(env.URL302, 302);
 			else if (env.URL) return await proxyURL(env.URL, url);
@@ -74,79 +92,49 @@ export default {
 				},
 			});
 		} else {
-			let subNameMapForUse = {};
-			// 检查是否是UUID路径（如 /uuid-1, /uuid-2等，或标准UUID格式）
-			const uuidMatch = pathToken && (/^uuid-(\d+)$/i.test(pathToken) || /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(pathToken));
-			// 检查是否是SUBX路径（如 /SUB1, /SUB2等）
-			const subXMatch = pathToken.match(/^SUB(\d+)$/i);
-			
-			if (uuidMatch && env.KV) {
-				// 使用UUID作为文件名和标识
-				const kvFileName = `${pathToken}.txt`;
-				const uuidName = pathToken.replace(/^uuid-/i, 'UUID-');
-				
-				await 迁移地址列表(env, kvFileName);
-				if (userAgent.includes('mozilla') && !url.search) {
-					await sendMessage(`#编辑订阅 ${uuidName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
-					return await KV(request, env, kvFileName, 访客订阅, uuidName, pathToken);
-				} else {
-					const uuidData = await env.KV.get(kvFileName) || '';
-					if (uuidData) {
-						const uuidUrls = await ADD(uuidData);
-						urls = urls.concat(uuidUrls);
-					}
-				}
-			} else if (subXMatch && env.KV) {
-				const subNumber = subXMatch[1];
-				const subXKey = `SUB${subNumber}`;
-				const subXNameKey = `SUBNAME${subNumber}`;
-				const subXName = env[subXNameKey] || `订阅${subNumber}`;
-				const kvFileName = `SUB${subNumber}.txt`;
-				
-				await 迁移地址列表(env, kvFileName);
-				if (userAgent.includes('mozilla') && !url.search) {
-					await sendMessage(`#编辑订阅 ${subXName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
-					return await KV(request, env, kvFileName, 访客订阅, subXName, pathToken);
-				} else {
-					const subXData = await env.KV.get(kvFileName) || '';
-					if (subXData) {
-						const subXUrls = await ADD(subXData);
-						urls = urls.concat(subXUrls);
-					}
-				}
+			// 确定当前使用的token（fakeToken视为mytoken）
+			let currentToken = token || pathToken || mytoken;
+			if (currentToken === fakeToken) {
+				currentToken = mytoken; // fakeToken使用主token的数据
 			}
+			const isMainToken = currentToken === mytoken;
 			
-			if (env.KV && !uuidMatch && !subXMatch) {
-				await 迁移地址列表(env, 'LINK.txt');
-				if (userAgent.includes('mozilla') && !url.search) {
-					await sendMessage(`#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
-					return await KV(request, env, 'LINK.txt', 访客订阅);
-				} else {
-					MainData = await env.KV.get('LINK.txt') || MainData;
+			if (env.KV) {
+				// 处理管理界面的特殊请求
+				if (isMainToken && userAgent.includes('mozilla') && url.searchParams.has('manage')) {
+					return await manageSubscriptions(request, env, mytoken, url);
 				}
-			} else if (!env.KV) {
+				
+				// 处理创建/删除订阅的请求
+				if (isMainToken && request.method === 'POST' && url.searchParams.has('action')) {
+					const action = url.searchParams.get('action');
+					if (action === 'create') {
+						const newToken = await request.text();
+						return await createSubscription(env, newToken.trim());
+					} else if (action === 'delete') {
+						const delToken = await request.text();
+						return await deleteSubscription(env, delToken.trim());
+					}
+				}
+				
+				// WebUI界面（浏览器访问）
+				if (userAgent.includes('mozilla') && !url.searchParams.has('sub')) {
+					await sendMessage(`#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
+					// 主token显示管理界面，其他token显示各自的编辑界面
+					if (isMainToken) {
+						return await KV(request, env, 'LINK.txt', 访客订阅, mytoken, true);
+					} else {
+						return await KV(request, env, `LINK_${currentToken}.txt`, 访客订阅, currentToken, false);
+					}
+				}
+				
+				// 获取订阅数据（根据token从对应的KV key读取）
+				const kvKey = isMainToken ? 'LINK.txt' : `LINK_${currentToken}.txt`;
+				await 迁移地址列表(env, kvKey);
+				MainData = await env.KV.get(kvKey) || MainData;
+			} else {
 				MainData = env.LINK || MainData;
 				if (env.LINKSUB) urls = await ADD(env.LINKSUB);
-				const subEnvVars = [];
-				const subNameMap = {};
-				for (const key in env) {
-					if (/^SUB\d+$/.test(key)) {
-						const subValue = env[key];
-						if (subValue && subValue.trim()) {
-							subEnvVars.push(subValue);
-							const subNumber = key.match(/^SUB(\d+)$/)[1];
-							const subNameKey = `SUBNAME${subNumber}`;
-							if (env[subNameKey] && env[subNameKey].trim()) {
-								subNameMap[subValue] = env[subNameKey].trim();
-							}
-						}
-					}
-				}
-				if (subEnvVars.length > 0) {
-					const additionalUrls = await ADD(subEnvVars.join('\n'));
-					urls = urls.concat(additionalUrls);
-				}
-				subNameMapForUse = subNameMap;
 			}
 			let 重新汇总所有链接 = await ADD(MainData + '\n' + urls.join('\n'));
 			let 自建节点 = "";
@@ -178,7 +166,9 @@ export default {
 			}
 
 			let subConverterUrl;
-			let 订阅转换URL = `${url.origin}/${await MD5MD5(fakeToken)}?token=${fakeToken}`;
+			// 使用当前token生成订阅转换URL（fakeToken视为mytoken）
+			const urlToken = (token === fakeToken) ? mytoken : (token || pathToken || mytoken);
+			let 订阅转换URL = `${url.origin}/${urlToken}?token=${urlToken}`;
 			//console.log(订阅转换URL);
 			let req_data = MainData;
 
@@ -192,7 +182,7 @@ export default {
 
 			const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.()); // 去重
 			if (订阅链接数组.length > 0) {
-				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader, subNameMapForUse);
+				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader);
 				console.log(请求订阅响应内容);
 				req_data += 请求订阅响应内容[0].join('\n');
 				订阅转换URL += "|" + 请求订阅响应内容[1];
@@ -436,7 +426,7 @@ async function proxyURL(proxyURL, url) {
 	return newResponse;
 }
 
-async function getSUB(api, request, 追加UA, userAgentHeader, subNameMap = {}) {
+async function getSUB(api, request, 追加UA, userAgentHeader) {
 	if (!api || api.length === 0) {
 		return [];
 	} else api = [...new Set(api)]; // 去重
@@ -457,32 +447,24 @@ async function getSUB(api, request, 追加UA, userAgentHeader, subNameMap = {}) 
 			// 检查是否请求成功
 			if (response.status === 'rejected') {
 				const reason = response.reason;
-				const apiUrl = api[index];
-				const subName = subNameMap[apiUrl] || apiUrl.split('://')[1]?.split('/')[0] || '未知';
 				if (reason && reason.name === 'AbortError') {
-					console.error(`订阅超时 [${subName}]: ${apiUrl}`);
 					return {
 						status: '超时',
 						value: null,
-						apiUrl: apiUrl,
-						subName: subName
+						apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
 					};
 				}
-				console.error(`请求失败 [${subName}]: ${apiUrl}, 错误信息: ${reason.status} ${reason.statusText}`);
+				console.error(`请求失败: ${api[index]}, 错误信息: ${reason.status} ${reason.statusText}`);
 				return {
 					status: '请求失败',
 					value: null,
-					apiUrl: apiUrl,
-					subName: subName
+					apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
 				};
 			}
-			const apiUrl = api[index];
-			const subName = subNameMap[apiUrl] || apiUrl.split('://')[1]?.split('/')[0] || '未知';
 			return {
 				status: response.status,
 				value: response.value,
-				apiUrl: apiUrl,
-				subName: subName
+				apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
 			};
 		});
 
@@ -492,23 +474,21 @@ async function getSUB(api, request, 追加UA, userAgentHeader, subNameMap = {}) 
 			// 检查响应状态是否为'fulfilled'
 			if (response.status === 'fulfilled') {
 				const content = await response.value || 'null'; // 获取响应的内容
-				const subName = response.subName || response.apiUrl.split('://')[1]?.split('/')[0] || '未知';
 				if (content.includes('proxies:')) {
-					console.log(`Clash订阅 [${subName}]: ${response.apiUrl}`);
+					//console.log('Clash订阅: ' + response.apiUrl);
 					订阅转换URLs += "|" + response.apiUrl; // Clash 配置
 				} else if (content.includes('outbounds"') && content.includes('inbounds"')) {
-					console.log(`Singbox订阅 [${subName}]: ${response.apiUrl}`);
+					//console.log('Singbox订阅: ' + response.apiUrl);
 					订阅转换URLs += "|" + response.apiUrl; // Singbox 配置
 				} else if (content.includes('://')) {
-					console.log(`明文订阅 [${subName}]: ${response.apiUrl}`);
+					//console.log('明文订阅: ' + response.apiUrl);
 					newapi += content + '\n'; // 追加内容
 				} else if (isValidBase64(content)) {
-					console.log(`Base64订阅 [${subName}]: ${response.apiUrl}`);
+					//console.log('Base64订阅: ' + response.apiUrl);
 					newapi += base64Decode(content) + '\n'; // 解码并追加内容
 				} else {
-					const subNameForError = encodeURIComponent(subName);
-					const 异常订阅LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${subNameForError}`;
-					console.log(`异常订阅 [${subName}]: ${异常订阅LINK}`);
+					const 异常订阅LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${response.apiUrl.split('://')[1].split('/')[0]}`;
+					console.log('异常订阅: ' + 异常订阅LINK);
 					异常订阅 += `${异常订阅LINK}\n`;
 				}
 			}
@@ -576,10 +556,267 @@ async function 迁移地址列表(env, txt = 'ADD.txt') {
 	return false;
 }
 
-async function KV(request, env, txt = 'ADD.txt', guest, customTitle = null, pathToken = null) {
+// 创建订阅
+async function createSubscription(env, newToken) {
+	if (!env.KV) return new Response("未绑定KV空间", { status: 400 });
+	if (!newToken || newToken.trim() === '') {
+		return new Response("Token不能为空", { status: 400 });
+	}
+	
+	try {
+		// 获取现有token列表
+		const tokenList = await env.KV.get('TOKEN_LIST') || '';
+		const tokens = tokenList.split('\n').filter(t => t.trim());
+		
+		// 检查token是否已存在
+		if (tokens.includes(newToken.trim())) {
+			return new Response("Token已存在", { status: 400 });
+		}
+		
+		// 添加新token
+		tokens.push(newToken.trim());
+		await env.KV.put('TOKEN_LIST', tokens.join('\n'));
+		
+		// 创建空的订阅数据
+		await env.KV.put(`LINK_${newToken.trim()}.txt`, '');
+		
+		return new Response("订阅创建成功");
+	} catch (error) {
+		console.error('创建订阅时发生错误:', error);
+		return new Response("创建失败: " + error.message, { status: 500 });
+	}
+}
+
+// 删除订阅
+async function deleteSubscription(env, delToken) {
+	if (!env.KV) return new Response("未绑定KV空间", { status: 400 });
+	if (!delToken || delToken.trim() === '') {
+		return new Response("Token不能为空", { status: 400 });
+	}
+	
+	try {
+		// 获取现有token列表
+		const tokenList = await env.KV.get('TOKEN_LIST') || '';
+		const tokens = tokenList.split('\n').filter(t => t.trim());
+		
+		// 移除token
+		const newTokens = tokens.filter(t => t !== delToken.trim());
+		await env.KV.put('TOKEN_LIST', newTokens.join('\n'));
+		
+		// 删除订阅数据
+		await env.KV.delete(`LINK_${delToken.trim()}.txt`);
+		
+		return new Response("订阅删除成功");
+	} catch (error) {
+		console.error('删除订阅时发生错误:', error);
+		return new Response("删除失败: " + error.message, { status: 500 });
+	}
+}
+
+// 管理订阅界面
+async function manageSubscriptions(request, env, mytoken, url) {
+	if (!env.KV) {
+		return new Response("未绑定KV空间", { status: 400 });
+	}
+	
+	try {
+		const tokenList = await env.KV.get('TOKEN_LIST') || '';
+		const tokens = tokenList.split('\n').filter(t => t.trim());
+		
+		let subscriptionsHtml = '';
+		if (tokens.length > 0) {
+			subscriptionsHtml = tokens.map(token => {
+				return `
+					<div style="border: 1px solid #ccc; padding: 10px; margin: 10px 0; border-radius: 4px;">
+						<strong>Token: ${token}</strong><br>
+						订阅地址: <a href="https://${url.hostname}/${token}" target="_blank">https://${url.hostname}/${token}</a><br>
+						编辑地址: <a href="https://${url.hostname}/${token}" target="_blank">https://${url.hostname}/${token}</a><br>
+						<button onclick="deleteSub('${token}')" style="background: #f44336; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 5px;">删除</button>
+					</div>
+				`;
+			}).join('');
+		} else {
+			subscriptionsHtml = '<p>暂无其他订阅</p>';
+		}
+		
+		const html = `
+			<!DOCTYPE html>
+			<html>
+				<head>
+					<title>${FileName} 订阅管理</title>
+					<meta charset="utf-8">
+					<meta name="viewport" content="width=device-width, initial-scale=1">
+					<style>
+						body {
+							margin: 0;
+							padding: 15px;
+							box-sizing: border-box;
+							font-size: 13px;
+						}
+						.manage-container {
+							max-width: 800px;
+							margin: 0 auto;
+						}
+						.create-section {
+							border: 1px solid #4CAF50;
+							padding: 15px;
+							margin: 15px 0;
+							border-radius: 4px;
+							background: #f1f8f4;
+						}
+						.create-input {
+							width: 300px;
+							padding: 8px;
+							border: 1px solid #ccc;
+							border-radius: 4px;
+							margin-right: 10px;
+						}
+						.create-btn {
+							background: #4CAF50;
+							color: white;
+							border: none;
+							padding: 8px 15px;
+							border-radius: 4px;
+							cursor: pointer;
+						}
+						.create-btn:hover {
+							background: #45a049;
+						}
+						.subscription-item {
+							border: 1px solid #ccc;
+							padding: 10px;
+							margin: 10px 0;
+							border-radius: 4px;
+							background: #f9f9f9;
+						}
+						.delete-btn {
+							background: #f44336;
+							color: white;
+							border: none;
+							padding: 5px 10px;
+							border-radius: 4px;
+							cursor: pointer;
+							margin-top: 5px;
+						}
+						.delete-btn:hover {
+							background: #da190b;
+						}
+						.back-link {
+							display: inline-block;
+							margin-top: 15px;
+							color: #666;
+							text-decoration: none;
+						}
+						.back-link:hover {
+							color: #000;
+						}
+					</style>
+				</head>
+				<body>
+					<div class="manage-container">
+						<h2>${FileName} 订阅管理</h2>
+						<p>主管理Token: <strong>${mytoken}</strong></p>
+						
+						<div class="create-section">
+							<h3>创建新订阅</h3>
+							<input type="text" id="newToken" class="create-input" placeholder="输入新的Token名称">
+							<button class="create-btn" onclick="createSub()">创建订阅</button>
+							<span id="createStatus" style="margin-left: 10px;"></span>
+						</div>
+						
+						<h3>所有订阅列表</h3>
+						<div id="subscriptions">
+							${subscriptionsHtml}
+						</div>
+						
+						<a href="https://${url.hostname}/${mytoken}" class="back-link">← 返回主订阅编辑</a>
+					</div>
+					
+					<script>
+						async function createSub() {
+							const newToken = document.getElementById('newToken').value.trim();
+							if (!newToken) {
+								alert('请输入Token名称');
+								return;
+							}
+							
+							const statusElem = document.getElementById('createStatus');
+							statusElem.textContent = '创建中...';
+							statusElem.style.color = '#666';
+							
+							try {
+								const response = await fetch(window.location.href + '&action=create', {
+									method: 'POST',
+									body: newToken,
+									headers: {
+										'Content-Type': 'text/plain;charset=UTF-8'
+									}
+								});
+								
+								const result = await response.text();
+								if (response.ok) {
+									statusElem.textContent = '创建成功！';
+									statusElem.style.color = '#4CAF50';
+									document.getElementById('newToken').value = '';
+									setTimeout(() => {
+										location.reload();
+									}, 1000);
+								} else {
+									statusElem.textContent = '创建失败: ' + result;
+									statusElem.style.color = '#f44336';
+								}
+							} catch (error) {
+								statusElem.textContent = '创建失败: ' + error.message;
+								statusElem.style.color = '#f44336';
+							}
+						}
+						
+						async function deleteSub(token) {
+							if (!confirm('确定要删除订阅 "' + token + '" 吗？此操作不可恢复！')) {
+								return;
+							}
+							
+							try {
+								const response = await fetch(window.location.href + '&action=delete', {
+									method: 'POST',
+									body: token,
+									headers: {
+										'Content-Type': 'text/plain;charset=UTF-8'
+									}
+								});
+								
+								const result = await response.text();
+								if (response.ok) {
+									alert('删除成功！');
+									location.reload();
+								} else {
+									alert('删除失败: ' + result);
+								}
+							} catch (error) {
+								alert('删除失败: ' + error.message);
+							}
+						}
+					</script>
+				</body>
+			</html>
+		`;
+		
+		return new Response(html, {
+			headers: { "Content-Type": "text/html;charset=utf-8" }
+		});
+	} catch (error) {
+		console.error('管理订阅时发生错误:', error);
+		return new Response("服务器错误: " + error.message, {
+			status: 500,
+			headers: { "Content-Type": "text/plain;charset=utf-8" }
+		});
+	}
+}
+
+async function KV(request, env, txt = 'ADD.txt', guest, currentToken = null, isMainToken = false) {
 	const url = new URL(request.url);
-	const displayTitle = customTitle || FileName;
-	const currentToken = pathToken || mytoken;
+	const token = currentToken || 'auto';
+	
 	try {
 		// POST请求处理
 		if (request.method === "POST") {
@@ -611,7 +848,7 @@ async function KV(request, env, txt = 'ADD.txt', guest, customTitle = null, path
 			<!DOCTYPE html>
 			<html>
 				<head>
-					<title>${displayTitle} 订阅编辑</title>
+					<title>${FileName} 订阅编辑</title>
 					<meta charset="utf-8">
 					<meta name="viewport" content="width=device-width, initial-scale=1">
 					<style>
@@ -671,26 +908,32 @@ async function KV(request, env, txt = 'ADD.txt', guest, customTitle = null, path
 					<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
 				</head>
 				<body>
+					${isMainToken ? `<div style="background: #e3f2fd; padding: 10px; margin: 10px 0; border-radius: 4px; border-left: 4px solid #2196F3;">
+						<strong>主管理Token</strong> | 
+						<a href="https://${url.hostname}/${mytoken}?manage" style="color: #1976D2; text-decoration: underline;">管理所有订阅</a>
+					</div>` : ''}
 					################################################################<br>
 					Subscribe / sub 订阅地址, 点击链接自动 <strong>复制订阅链接</strong> 并 <strong>生成订阅二维码</strong> <br>
 					---------------------------------------------------------------<br>
+					当前订阅Token: <strong>${token}</strong><br>
+					---------------------------------------------------------------<br>
 					自适应订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?sub','qrcode_0')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${token}?sub','qrcode_0')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${token}</a><br>
 					<div id="qrcode_0" style="margin: 10px 10px 10px 10px;"></div>
 					Base64订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?b64','qrcode_1')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?b64</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${token}?b64','qrcode_1')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${token}?b64</a><br>
 					<div id="qrcode_1" style="margin: 10px 10px 10px 10px;"></div>
 					clash订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?clash','qrcode_2')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?clash</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${token}?clash','qrcode_2')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${token}?clash</a><br>
 					<div id="qrcode_2" style="margin: 10px 10px 10px 10px;"></div>
 					singbox订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?sb','qrcode_3')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?sb</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${token}?sb','qrcode_3')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${token}?sb</a><br>
 					<div id="qrcode_3" style="margin: 10px 10px 10px 10px;"></div>
 					surge订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?surge','qrcode_4')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?surge</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${token}?surge','qrcode_4')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${token}?surge</a><br>
 					<div id="qrcode_4" style="margin: 10px 10px 10px 10px;"></div>
 					loon订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?loon','qrcode_5')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?loon</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${token}?loon','qrcode_5')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${token}?loon</a><br>
 					<div id="qrcode_5" style="margin: 10px 10px 10px 10px;"></div>
 					&nbsp;&nbsp;<strong><a href="javascript:void(0);" id="noticeToggle" onclick="toggleNotice()">查看访客订阅∨</a></strong><br>
 					<div id="noticeContent" class="notice-content" style="display: none;">
@@ -725,7 +968,7 @@ async function KV(request, env, txt = 'ADD.txt', guest, customTitle = null, path
 					SUBCONFIG（订阅转换配置文件）: <strong>${subConfig}</strong><br>
 					---------------------------------------------------------------<br>
 					################################################################<br>
-					${displayTitle} 汇聚订阅编辑: 
+					${FileName} 汇聚订阅编辑: 
 					<div class="editor-container">
 						${hasKV ? `
 						<textarea class="editor" 

@@ -109,6 +109,42 @@
 | SUBCONFIG | [https://raw.github.../ACL4SSR_Online_MultiCountry.ini](https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini) | ❌ | clash、singbox等 订阅转换配置文件 | 
 
 
+## 🔐 多订阅管理功能
+
+### 功能说明
+- **主管理Token（TOKEN）**：作为主管理token，可以管理所有订阅
+- **多订阅支持**：每个token对应一个独立的订阅，数据存储在KV中
+- **独立WebUI**：每个订阅都有独立的WebUI编辑界面
+
+### 使用方法
+
+1. **访问主管理界面**：
+   - 使用主token（TOKEN）访问：`https://your-domain.com/auto`
+   - 在主界面可以看到"管理所有订阅"链接
+
+2. **创建新订阅**：
+   - 在主管理界面输入新的token名称（例如：`sub1`、`sub2`等）
+   - 点击"创建订阅"按钮
+   - 新订阅会自动创建，数据存储在 `LINK_${token}.txt` 中
+
+3. **访问订阅**：
+   - 主订阅：`https://your-domain.com/auto` 或 `https://your-domain.com/?token=auto`
+   - 其他订阅：`https://your-domain.com/sub1` 或 `https://your-domain.com/?token=sub1`
+
+4. **编辑订阅**：
+   - 访问对应token的WebUI界面（浏览器访问）
+   - 每个订阅都有独立的编辑界面
+   - 主token界面会显示"管理所有订阅"链接
+
+5. **删除订阅**：
+   - 在主管理界面点击对应订阅的"删除"按钮
+   - 确认后即可删除订阅及其数据
+
+### 数据存储
+- 主订阅数据：`LINK.txt`
+- 其他订阅数据：`LINK_${token}.txt`
+- Token列表：`TOKEN_LIST`（存储所有创建的token）
+
 ## ⚠️ 注意事项
 项目中，TGTOKEN和TGID在使用时需要先到Telegram注册并获取。其中，TGTOKEN是telegram bot的凭证，TGID是用来接收通知的telegram用户或者组的id。
 
