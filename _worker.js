@@ -122,9 +122,9 @@ export default {
 					await sendMessage(`#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
 					// 主token显示管理界面，其他token显示各自的编辑界面
 					if (isMainToken) {
-						return await KV(request, env, 'LINK.txt', 访客订阅, mytoken, true);
+						return await KV(request, env, 'LINK.txt', 访客订阅, mytoken, true, mytoken, FileName, subProtocol, subConverter, subConfig);
 					} else {
-						return await KV(request, env, `LINK_${currentToken}.txt`, 访客订阅, currentToken, false);
+						return await KV(request, env, `LINK_${currentToken}.txt`, 访客订阅, currentToken, false, mytoken, FileName, subProtocol, subConverter, subConfig);
 					}
 				}
 				
@@ -627,10 +627,10 @@ async function manageSubscriptions(request, env, mytoken, url) {
 		if (tokens.length > 0) {
 			subscriptionsHtml = tokens.map(token => {
 				return `
-					<div style="border: 1px solid #ccc; padding: 10px; margin: 10px 0; border-radius: 4px;">
+					<div style="border: 1px solid #ccc; padding: 10px; margin: 10px 0; border-radius: 4px; background: #f9f9f9;">
 						<strong>Token: ${token}</strong><br>
 						订阅地址: <a href="https://${url.hostname}/${token}" target="_blank">https://${url.hostname}/${token}</a><br>
-						编辑地址: <a href="https://${url.hostname}/${token}" target="_blank">https://${url.hostname}/${token}</a><br>
+						编辑地址: <a href="https://${url.hostname}/${token}" target="_blank" style="color: #1976D2;">点击编辑</a><br>
 						<button onclick="deleteSub('${token}')" style="background: #f44336; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 5px;">删除</button>
 					</div>
 				`;
@@ -755,12 +755,14 @@ async function manageSubscriptions(request, env, mytoken, url) {
 								
 								const result = await response.text();
 								if (response.ok) {
-									statusElem.textContent = '创建成功！';
+									statusElem.textContent = '创建成功！正在跳转...';
 									statusElem.style.color = '#4CAF50';
+									const tokenValue = newToken;
 									document.getElementById('newToken').value = '';
+									// 跳转到新token的编辑界面
 									setTimeout(() => {
-										location.reload();
-									}, 1000);
+										window.location.href = window.location.protocol + '//' + window.location.hostname + '/' + tokenValue;
+									}, 500);
 								} else {
 									statusElem.textContent = '创建失败: ' + result;
 									statusElem.style.color = '#f44336';
@@ -813,7 +815,7 @@ async function manageSubscriptions(request, env, mytoken, url) {
 	}
 }
 
-async function KV(request, env, txt = 'ADD.txt', guest, currentToken = null, isMainToken = false) {
+async function KV(request, env, txt = 'ADD.txt', guest, currentToken = null, isMainToken = false, mytoken = 'auto', FileName = 'CF-Workers-SUB', subProtocol = 'https', subConverter = 'SUBAPI.cmliussss.net', subConfig = '') {
 	const url = new URL(request.url);
 	const token = currentToken || 'auto';
 	
