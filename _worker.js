@@ -55,7 +55,15 @@ export default {
 		let expire = Math.floor(timestamp / 1000);
 		SUBUpdateTime = env.SUBUPTIME || SUBUpdateTime;
 
-		if (!([mytoken, fakeToken, 访客订阅].includes(token) || url.pathname == ("/" + mytoken) || url.pathname.includes("/" + mytoken + "?"))) {
+		const pathToken = url.pathname.startsWith('/') ? url.pathname.slice(1).split('?')[0].split('/')[0] : url.pathname.split('?')[0].split('/')[0];
+		const isValidToken = token && [mytoken, fakeToken, 访客订阅].includes(token);
+		// 检查是否是UUID路径（如 uuid-1, uuid-2等，或标准UUID格式）
+		const isUuidPath = pathToken && (/^uuid-\d+$/i.test(pathToken) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathToken));
+		// 检查是否是SUBX路径（如 SUB1, SUB2等）
+		const isSubXPath = pathToken && /^SUB\d+$/i.test(pathToken);
+		const isValidPath = pathToken && (pathToken === mytoken || pathToken === 访客订阅 || url.pathname.startsWith('/' + mytoken) || url.pathname.startsWith('/' + 访客订阅) || isSubXPath || isUuidPath);
+		
+		if (!(isValidToken || isValidPath)) {
 			if (TG == 1 && url.pathname !== "/" && url.pathname !== "/favicon.ico") await sendMessage(`#异常访问 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgent}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
 			if (env.URL302) return Response.redirect(env.URL302, 302);
 			else if (env.URL) return await proxyURL(env.URL, url);
@@ -66,7 +74,49 @@ export default {
 				},
 			});
 		} else {
-			if (env.KV) {
+			let subNameMapForUse = {};
+			// 检查是否是UUID路径（如 /uuid-1, /uuid-2等，或标准UUID格式）
+			const uuidMatch = pathToken && (/^uuid-(\d+)$/i.test(pathToken) || /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(pathToken));
+			// 检查是否是SUBX路径（如 /SUB1, /SUB2等）
+			const subXMatch = pathToken.match(/^SUB(\d+)$/i);
+			
+			if (uuidMatch && env.KV) {
+				// 使用UUID作为文件名和标识
+				const kvFileName = `${pathToken}.txt`;
+				const uuidName = pathToken.replace(/^uuid-/i, 'UUID-');
+				
+				await 迁移地址列表(env, kvFileName);
+				if (userAgent.includes('mozilla') && !url.search) {
+					await sendMessage(`#编辑订阅 ${uuidName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
+					return await KV(request, env, kvFileName, 访客订阅, uuidName, pathToken);
+				} else {
+					const uuidData = await env.KV.get(kvFileName) || '';
+					if (uuidData) {
+						const uuidUrls = await ADD(uuidData);
+						urls = urls.concat(uuidUrls);
+					}
+				}
+			} else if (subXMatch && env.KV) {
+				const subNumber = subXMatch[1];
+				const subXKey = `SUB${subNumber}`;
+				const subXNameKey = `SUBNAME${subNumber}`;
+				const subXName = env[subXNameKey] || `订阅${subNumber}`;
+				const kvFileName = `SUB${subNumber}.txt`;
+				
+				await 迁移地址列表(env, kvFileName);
+				if (userAgent.includes('mozilla') && !url.search) {
+					await sendMessage(`#编辑订阅 ${subXName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
+					return await KV(request, env, kvFileName, 访客订阅, subXName, pathToken);
+				} else {
+					const subXData = await env.KV.get(kvFileName) || '';
+					if (subXData) {
+						const subXUrls = await ADD(subXData);
+						urls = urls.concat(subXUrls);
+					}
+				}
+			}
+			
+			if (env.KV && !uuidMatch && !subXMatch) {
 				await 迁移地址列表(env, 'LINK.txt');
 				if (userAgent.includes('mozilla') && !url.search) {
 					await sendMessage(`#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
@@ -74,9 +124,29 @@ export default {
 				} else {
 					MainData = await env.KV.get('LINK.txt') || MainData;
 				}
-			} else {
+			} else if (!env.KV) {
 				MainData = env.LINK || MainData;
 				if (env.LINKSUB) urls = await ADD(env.LINKSUB);
+				const subEnvVars = [];
+				const subNameMap = {};
+				for (const key in env) {
+					if (/^SUB\d+$/.test(key)) {
+						const subValue = env[key];
+						if (subValue && subValue.trim()) {
+							subEnvVars.push(subValue);
+							const subNumber = key.match(/^SUB(\d+)$/)[1];
+							const subNameKey = `SUBNAME${subNumber}`;
+							if (env[subNameKey] && env[subNameKey].trim()) {
+								subNameMap[subValue] = env[subNameKey].trim();
+							}
+						}
+					}
+				}
+				if (subEnvVars.length > 0) {
+					const additionalUrls = await ADD(subEnvVars.join('\n'));
+					urls = urls.concat(additionalUrls);
+				}
+				subNameMapForUse = subNameMap;
 			}
 			let 重新汇总所有链接 = await ADD(MainData + '\n' + urls.join('\n'));
 			let 自建节点 = "";
@@ -122,7 +192,7 @@ export default {
 
 			const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.()); // 去重
 			if (订阅链接数组.length > 0) {
-				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader);
+				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader, subNameMapForUse);
 				console.log(请求订阅响应内容);
 				req_data += 请求订阅响应内容[0].join('\n');
 				订阅转换URL += "|" + 请求订阅响应内容[1];
@@ -366,7 +436,7 @@ async function proxyURL(proxyURL, url) {
 	return newResponse;
 }
 
-async function getSUB(api, request, 追加UA, userAgentHeader) {
+async function getSUB(api, request, 追加UA, userAgentHeader, subNameMap = {}) {
 	if (!api || api.length === 0) {
 		return [];
 	} else api = [...new Set(api)]; // 去重
@@ -387,24 +457,32 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 			// 检查是否请求成功
 			if (response.status === 'rejected') {
 				const reason = response.reason;
+				const apiUrl = api[index];
+				const subName = subNameMap[apiUrl] || apiUrl.split('://')[1]?.split('/')[0] || '未知';
 				if (reason && reason.name === 'AbortError') {
+					console.error(`订阅超时 [${subName}]: ${apiUrl}`);
 					return {
 						status: '超时',
 						value: null,
-						apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
+						apiUrl: apiUrl,
+						subName: subName
 					};
 				}
-				console.error(`请求失败: ${api[index]}, 错误信息: ${reason.status} ${reason.statusText}`);
+				console.error(`请求失败 [${subName}]: ${apiUrl}, 错误信息: ${reason.status} ${reason.statusText}`);
 				return {
 					status: '请求失败',
 					value: null,
-					apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
+					apiUrl: apiUrl,
+					subName: subName
 				};
 			}
+			const apiUrl = api[index];
+			const subName = subNameMap[apiUrl] || apiUrl.split('://')[1]?.split('/')[0] || '未知';
 			return {
 				status: response.status,
 				value: response.value,
-				apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
+				apiUrl: apiUrl,
+				subName: subName
 			};
 		});
 
@@ -414,21 +492,23 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 			// 检查响应状态是否为'fulfilled'
 			if (response.status === 'fulfilled') {
 				const content = await response.value || 'null'; // 获取响应的内容
+				const subName = response.subName || response.apiUrl.split('://')[1]?.split('/')[0] || '未知';
 				if (content.includes('proxies:')) {
-					//console.log('Clash订阅: ' + response.apiUrl);
+					console.log(`Clash订阅 [${subName}]: ${response.apiUrl}`);
 					订阅转换URLs += "|" + response.apiUrl; // Clash 配置
 				} else if (content.includes('outbounds"') && content.includes('inbounds"')) {
-					//console.log('Singbox订阅: ' + response.apiUrl);
+					console.log(`Singbox订阅 [${subName}]: ${response.apiUrl}`);
 					订阅转换URLs += "|" + response.apiUrl; // Singbox 配置
 				} else if (content.includes('://')) {
-					//console.log('明文订阅: ' + response.apiUrl);
+					console.log(`明文订阅 [${subName}]: ${response.apiUrl}`);
 					newapi += content + '\n'; // 追加内容
 				} else if (isValidBase64(content)) {
-					//console.log('Base64订阅: ' + response.apiUrl);
+					console.log(`Base64订阅 [${subName}]: ${response.apiUrl}`);
 					newapi += base64Decode(content) + '\n'; // 解码并追加内容
 				} else {
-					const 异常订阅LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${response.apiUrl.split('://')[1].split('/')[0]}`;
-					console.log('异常订阅: ' + 异常订阅LINK);
+					const subNameForError = encodeURIComponent(subName);
+					const 异常订阅LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${subNameForError}`;
+					console.log(`异常订阅 [${subName}]: ${异常订阅LINK}`);
 					异常订阅 += `${异常订阅LINK}\n`;
 				}
 			}
@@ -496,8 +576,10 @@ async function 迁移地址列表(env, txt = 'ADD.txt') {
 	return false;
 }
 
-async function KV(request, env, txt = 'ADD.txt', guest) {
+async function KV(request, env, txt = 'ADD.txt', guest, customTitle = null, pathToken = null) {
 	const url = new URL(request.url);
+	const displayTitle = customTitle || FileName;
+	const currentToken = pathToken || mytoken;
 	try {
 		// POST请求处理
 		if (request.method === "POST") {
@@ -529,7 +611,7 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 			<!DOCTYPE html>
 			<html>
 				<head>
-					<title>${FileName} 订阅编辑</title>
+					<title>${displayTitle} 订阅编辑</title>
 					<meta charset="utf-8">
 					<meta name="viewport" content="width=device-width, initial-scale=1">
 					<style>
@@ -593,22 +675,22 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 					Subscribe / sub 订阅地址, 点击链接自动 <strong>复制订阅链接</strong> 并 <strong>生成订阅二维码</strong> <br>
 					---------------------------------------------------------------<br>
 					自适应订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${mytoken}?sub','qrcode_0')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${mytoken}</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?sub','qrcode_0')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}</a><br>
 					<div id="qrcode_0" style="margin: 10px 10px 10px 10px;"></div>
 					Base64订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${mytoken}?b64','qrcode_1')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${mytoken}?b64</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?b64','qrcode_1')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?b64</a><br>
 					<div id="qrcode_1" style="margin: 10px 10px 10px 10px;"></div>
 					clash订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${mytoken}?clash','qrcode_2')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${mytoken}?clash</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?clash','qrcode_2')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?clash</a><br>
 					<div id="qrcode_2" style="margin: 10px 10px 10px 10px;"></div>
 					singbox订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${mytoken}?sb','qrcode_3')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${mytoken}?sb</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?sb','qrcode_3')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?sb</a><br>
 					<div id="qrcode_3" style="margin: 10px 10px 10px 10px;"></div>
 					surge订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${mytoken}?surge','qrcode_4')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${mytoken}?surge</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?surge','qrcode_4')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?surge</a><br>
 					<div id="qrcode_4" style="margin: 10px 10px 10px 10px;"></div>
 					loon订阅地址:<br>
-					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${mytoken}?loon','qrcode_5')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${mytoken}?loon</a><br>
+					<a href="javascript:void(0)" onclick="copyToClipboard('https://${url.hostname}/${currentToken}?loon','qrcode_5')" style="color:blue;text-decoration:underline;cursor:pointer;">https://${url.hostname}/${currentToken}?loon</a><br>
 					<div id="qrcode_5" style="margin: 10px 10px 10px 10px;"></div>
 					&nbsp;&nbsp;<strong><a href="javascript:void(0);" id="noticeToggle" onclick="toggleNotice()">查看访客订阅∨</a></strong><br>
 					<div id="noticeContent" class="notice-content" style="display: none;">
@@ -643,7 +725,7 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 					SUBCONFIG（订阅转换配置文件）: <strong>${subConfig}</strong><br>
 					---------------------------------------------------------------<br>
 					################################################################<br>
-					${FileName} 汇聚订阅编辑: 
+					${displayTitle} 汇聚订阅编辑: 
 					<div class="editor-container">
 						${hasKV ? `
 						<textarea class="editor" 
