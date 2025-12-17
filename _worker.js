@@ -107,7 +107,7 @@ export default {
 					if (action === 'create') {
 						const newToken = await request.text();
 						console.log(`创建订阅请求 - Token: ${newToken.trim()}`);
-						return await createSubscription(env, newToken.trim());
+						return await createSubscription(env, newToken.trim(), mytoken, fakeToken, 访客订阅);
 					} else if (action === 'delete') {
 						const delToken = await request.text();
 						console.log(`删除订阅请求 - Token: ${delToken.trim()}`);
@@ -577,7 +577,7 @@ async function 迁移地址列表(env, txt = 'ADD.txt') {
 }
 
 // 创建订阅
-async function createSubscription(env, newToken) {
+async function createSubscription(env, newToken, mytoken = 'auto', fakeToken = '', guestToken = '') {
 	console.log('=== 开始创建订阅 ===');
 	console.log('newToken:', newToken);
 	
@@ -593,6 +593,19 @@ async function createSubscription(env, newToken) {
 	const trimmedToken = newToken.trim();
 	console.log('trimmedToken:', trimmedToken);
 	
+	// 检查是否与系统保留token冲突
+	const reservedTokens = [mytoken, fakeToken, guestToken].filter(t => t && t.trim());
+	if (reservedTokens.includes(trimmedToken)) {
+		console.error(`Token与系统保留token冲突: ${trimmedToken}`);
+		return new Response(`Token不能使用保留关键字，请使用其他名称`, { status: 400 });
+	}
+	
+	// 检查是否包含特殊字符或路径分隔符
+	if (trimmedToken.includes('/') || trimmedToken.includes('?') || trimmedToken.includes('&') || trimmedToken.includes('#')) {
+		console.error(`Token包含非法字符: ${trimmedToken}`);
+		return new Response("Token不能包含特殊字符（/、?、&、#）", { status: 400 });
+	}
+	
 	try {
 		// 获取现有token列表
 		const tokenList = await env.KV.get('TOKEN_LIST') || '';
@@ -603,6 +616,12 @@ async function createSubscription(env, newToken) {
 		// 检查token是否已存在
 		if (tokens.includes(trimmedToken)) {
 			return new Response("Token已存在", { status: 400 });
+		}
+		
+		// 再次检查是否与保留token冲突（防止动态token如fakeToken）
+		if (reservedTokens.includes(trimmedToken)) {
+			console.error(`Token与系统保留token冲突: ${trimmedToken}`);
+			return new Response(`Token不能使用保留关键字，请使用其他名称`, { status: 400 });
 		}
 		
 		// 添加新token
@@ -827,11 +846,14 @@ async function manageSubscriptions(request, env, mytoken, url) {
 				<body>
 					<div class="manage-container">
 						<h2>${FileName} 订阅管理</h2>
-						<p>主管理Token: <strong>${mytoken}</strong></p>
+						<p>主管理Token: <strong>${mytoken}</strong>（可通过环境变量TOKEN配置）</p>
+						<p style="color: #666; font-size: 12px; margin-top: 5px;">
+							提示：Token不能与主管理Token相同，不能包含特殊字符（/、?、&、#）
+						</p>
 						
 						<div class="create-section">
 							<h3>创建新订阅</h3>
-							<input type="text" id="newToken" class="create-input" placeholder="输入新的Token名称">
+							<input type="text" id="newToken" class="create-input" placeholder="输入新的Token名称（不能与主Token冲突）">
 							<button class="create-btn" onclick="createSub()">创建订阅</button>
 							<span id="createStatus" style="margin-left: 10px;"></span>
 						</div>
@@ -849,6 +871,19 @@ async function manageSubscriptions(request, env, mytoken, url) {
 							const newToken = document.getElementById('newToken').value.trim();
 							if (!newToken) {
 								alert('请输入Token名称');
+								return;
+							}
+							
+							// 前端验证：检查特殊字符
+							if (newToken.includes('/') || newToken.includes('?') || newToken.includes('&') || newToken.includes('#')) {
+								alert('Token不能包含特殊字符（/、?、&、#）');
+								return;
+							}
+							
+							// 前端验证：检查是否为主token（从页面获取）
+							const mainToken = '${mytoken}';
+							if (newToken === mainToken) {
+								alert('Token不能与主管理Token相同');
 								return;
 							}
 							
