@@ -1205,7 +1205,7 @@ async function KV(request, env, txt = 'ADD.txt', guest, currentToken = null, isM
 					<br>
 					################################################################<br>
 					${decodeURIComponent(atob('LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tJTNDYnIlM0UlMEFnaXRodWIlMjAlRTklQTElQjklRTclOUIlQUUlRTUlOUMlQjAlRTUlOUQlODAlMjBTdGFyIVN0YXIhU3RhciEhISUzQ2JyJTNFJTBBJTNDYSUyMGhyZWYlM0QlMjJodHRwcyUzQSUyRiUyRmdpdGh1Yi5jb20lMkZBc1plcjBzJTJGQ0YtV29ya2Vycy1TVUIlMjIlMjB0YXJnZXQlM0QlMjJfYmxhbmslMjIlMjBzdHlsZSUzRCUyMmNvbG9yJTNBJTIwJTIzMTk3NkQyJTNCJTIyJTNFaHR0cHMlM0ElMkYlMkZnaXRodWIuY29tJTJGQXNaZXIwcyUyRkNGLVdvcmtlcnMtU1VCJTNDJTJGYSUzRSUzQ2JyJTNFJTBBJUU2JTg0JTlGJUU4JUIwJUEyJUU0JUI4JThBJUU2JUI4JUI4JUU0JUJCJTkzJUU1JUJBJTkzJTNDYnIlM0UlMEElM0NhJTIwaHJlZiUzRCUyMmh0dHBzJTNBJTJGJTJGZ2l0aHViLmNvbSUyRmNtbGl1JTJGQ0YtV29ya2Vycy1TVUIlMjIlMjB0YXJnZXQlM0QlMjJfYmxhbmslMjIlMjBzdHlsZSUzRCUyMmNvbG9yJTNBJTIwJTIzMTk3NkQyJTNCJTIyJTNFaHR0cHMlM0ElMkYlMkZnaXRodWIuY29tJTJGY21saXUlMkZDRi1Xb3JrZXJzLVNVQiUzQyUyRmElM0UlM0NiciUzRSUwQS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQ=='))}
-					################################################################<br>
+					<br>################################################################<br>
 					<br><br>UA: <strong>${request.headers.get('User-Agent')}</strong>
 					<script>
 					function copyToClipboard(text, qrcode) {
