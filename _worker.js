@@ -803,10 +803,43 @@ async function manageSubscriptions(request, env, mytoken, url) {
 									statusElem.style.color = '#4CAF50';
 									const tokenValue = newToken;
 									document.getElementById('newToken').value = '';
-									// 刷新页面显示新token的输入框
-									setTimeout(() => {
-										location.reload();
-									}, 500);
+									
+									// 动态添加新token的输入框，不刷新页面
+									const subscriptionsDiv = document.getElementById('subscriptions');
+									const hostname = window.location.hostname;
+									
+									const newTokenHtml = \`
+										<div style="border: 1px solid #ccc; padding: 15px; margin: 10px 0; border-radius: 4px; background: #f9f9f9;">
+											<strong>Token: \${tokenValue}</strong><br><br>
+											<div id="linkInput_\${tokenValue}" style="">
+												<label style="display: block; margin-bottom: 5px; font-weight: bold;">输入LINK（节点链接或订阅链接，每行一个）:</label>
+												<textarea id="linkContent_\${tokenValue}" rows="5" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; box-sizing: border-box;" placeholder="vless://...&#10;vmess://...&#10;https://sub.example.com"></textarea>
+												<button onclick="saveLink('\${tokenValue}')" style="background: #4CAF50; color: white; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; margin-top: 5px;">保存LINK</button>
+												<span id="saveStatus_\${tokenValue}" style="margin-left: 10px;"></span>
+											</div>
+											<div id="linkDisplay_\${tokenValue}" style="display: none;">
+												<strong>订阅链接:</strong><br>
+												<div style="background: #fff; padding: 10px; margin: 5px 0; border-radius: 4px; border: 1px solid #ddd;">
+													自适应: <a href="https://\${hostname}/\${tokenValue}" target="_blank" style="color: #1976D2;">https://\${hostname}/\${tokenValue}</a><br>
+													Base64: <a href="https://\${hostname}/\${tokenValue}?b64" target="_blank" style="color: #1976D2;">https://\${hostname}/\${tokenValue}?b64</a><br>
+													Clash: <a href="https://\${hostname}/\${tokenValue}?clash" target="_blank" style="color: #1976D2;">https://\${hostname}/\${tokenValue}?clash</a><br>
+													SingBox: <a href="https://\${hostname}/\${tokenValue}?sb" target="_blank" style="color: #1976D2;">https://\${hostname}/\${tokenValue}?sb</a><br>
+													Surge: <a href="https://\${hostname}/\${tokenValue}?surge" target="_blank" style="color: #1976D2;">https://\${hostname}/\${tokenValue}?surge</a><br>
+													Loon: <a href="https://\${hostname}/\${tokenValue}?loon" target="_blank" style="color: #1976D2;">https://\${hostname}/\${tokenValue}?loon</a>
+												</div>
+												<button onclick="editLink('\${tokenValue}')" style="background: #2196F3; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 5px;">编辑LINK</button>
+												<button onclick="deleteSub('\${tokenValue}')" style="background: #f44336; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 5px; margin-left: 5px;">删除订阅</button>
+											</div>
+										</div>
+									\`;
+									
+									// 如果订阅列表为空，先移除提示
+									if (subscriptionsDiv.innerHTML.includes('暂无其他订阅')) {
+										subscriptionsDiv.innerHTML = '';
+									}
+									
+									// 添加新token的HTML到列表顶部
+									subscriptionsDiv.insertAdjacentHTML('afterbegin', newTokenHtml);
 								} else {
 									statusElem.textContent = '创建失败: ' + result;
 									statusElem.style.color = '#f44336';
