@@ -100,19 +100,17 @@ export default {
 			const isMainToken = currentToken === mytoken;
 			
 			if (env.KV) {
-				// 处理管理界面的特殊请求
-				if (isMainToken && userAgent.includes('mozilla') && url.searchParams.has('manage')) {
-					return await manageSubscriptions(request, env, mytoken, url);
-				}
-				
-				// 处理创建/删除订阅的请求
+				// 优先处理POST请求的action（创建/删除/保存）
 				if (isMainToken && request.method === 'POST' && url.searchParams.has('action')) {
 					const action = url.searchParams.get('action');
+					console.log(`收到POST请求 - Action: ${action}, URL: ${url.href}`);
 					if (action === 'create') {
 						const newToken = await request.text();
+						console.log(`创建订阅请求 - Token: ${newToken.trim()}`);
 						return await createSubscription(env, newToken.trim());
 					} else if (action === 'delete') {
 						const delToken = await request.text();
+						console.log(`删除订阅请求 - Token: ${delToken.trim()}`);
 						return await deleteSubscription(env, delToken.trim());
 					} else if (action === 'saveLink') {
 						const token = url.searchParams.get('token');
@@ -131,6 +129,11 @@ export default {
 						}
 						return new Response("Token不能为空", { status: 400 });
 					}
+				}
+				
+				// 处理管理界面的GET请求
+				if (isMainToken && userAgent.includes('mozilla') && url.searchParams.has('manage') && request.method === 'GET') {
+					return await manageSubscriptions(request, env, mytoken, url);
 				}
 				
 				// WebUI界面（浏览器访问）
@@ -574,17 +577,27 @@ async function 迁移地址列表(env, txt = 'ADD.txt') {
 
 // 创建订阅
 async function createSubscription(env, newToken) {
-	if (!env.KV) return new Response("未绑定KV空间", { status: 400 });
+	console.log('=== 开始创建订阅 ===');
+	console.log('newToken:', newToken);
+	
+	if (!env.KV) {
+		console.error('KV未绑定');
+		return new Response("未绑定KV空间", { status: 400 });
+	}
 	if (!newToken || newToken.trim() === '') {
+		console.error('Token为空');
 		return new Response("Token不能为空", { status: 400 });
 	}
 	
 	const trimmedToken = newToken.trim();
+	console.log('trimmedToken:', trimmedToken);
 	
 	try {
 		// 获取现有token列表
 		const tokenList = await env.KV.get('TOKEN_LIST') || '';
+		console.log('当前TOKEN_LIST:', tokenList);
 		const tokens = tokenList.split('\n').filter(t => t.trim());
+		console.log('解析后的tokens:', tokens);
 		
 		// 检查token是否已存在
 		if (tokens.includes(trimmedToken)) {
