@@ -136,15 +136,16 @@ export default {
 					return await manageSubscriptions(request, env, mytoken, url);
 				}
 				
-				// WebUI界面（浏览器访问）
-				if (userAgent.includes('mozilla') && !url.searchParams.has('sub')) {
+				// WebUI界面（浏览器访问）- 只有主token显示WebUI编辑界面
+				if (isMainToken && userAgent.includes('mozilla') && !url.searchParams.has('sub')) {
 					await sendMessage(`#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
-					// 主token显示管理界面，其他token显示各自的编辑界面
-					if (isMainToken) {
-						return await KV(request, env, 'LINK.txt', 访客订阅, mytoken, true, mytoken, FileName, subProtocol, subConverter, subConfig);
-					} else {
-						return await KV(request, env, `LINK_${currentToken}.txt`, 访客订阅, currentToken, false, mytoken, FileName, subProtocol, subConverter, subConfig);
-					}
+					// 主token显示编辑界面
+					return await KV(request, env, 'LINK.txt', 访客订阅, mytoken, true, mytoken, FileName, subProtocol, subConverter, subConfig);
+				}
+				
+				// 其他token（管理界面创建的）浏览器访问时，直接返回订阅内容，不显示WebUI
+				if (!isMainToken && userAgent.includes('mozilla') && !url.searchParams.has('sub')) {
+					// 直接继续执行订阅生成逻辑，不返回WebUI
 				}
 				
 				// 获取订阅数据（根据token从对应的KV key读取）
