@@ -118,7 +118,15 @@ export default {
 						const token = url.searchParams.get('token');
 						const linkContent = await request.text();
 						if (token) {
+							console.log(`保存LINK - Token: ${token}, ContentLength: ${linkContent.length}`);
 							await env.KV.put(`LINK_${token}.txt`, linkContent);
+							// 验证保存是否成功
+							const verify = await env.KV.get(`LINK_${token}.txt`);
+							if (verify === null) {
+								console.error(`LINK保存验证失败 - Token: ${token}`);
+								return new Response("LINK保存失败: 验证失败", { status: 500 });
+							}
+							console.log(`LINK保存成功 - Token: ${token}, VerifiedLength: ${verify.length}`);
 							return new Response("LINK保存成功");
 						}
 						return new Response("Token不能为空", { status: 400 });
@@ -571,23 +579,64 @@ async function createSubscription(env, newToken) {
 		return new Response("Token不能为空", { status: 400 });
 	}
 	
+	const trimmedToken = newToken.trim();
+	
 	try {
 		// 获取现有token列表
 		const tokenList = await env.KV.get('TOKEN_LIST') || '';
 		const tokens = tokenList.split('\n').filter(t => t.trim());
 		
 		// 检查token是否已存在
-		if (tokens.includes(newToken.trim())) {
+		if (tokens.includes(trimmedToken)) {
 			return new Response("Token已存在", { status: 400 });
 		}
 		
 		// 添加新token
-		tokens.push(newToken.trim());
-		await env.KV.put('TOKEN_LIST', tokens.join('\n'));
+		tokens.push(trimmedToken);
+		const newTokenList = tokens.join('\n');
+		
+		// 写入TOKEN_LIST
+		console.log(`准备写入TOKEN_LIST: ${newTokenList}`);
+		await env.KV.put('TOKEN_LIST', newTokenList);
+		
+		// 验证TOKEN_LIST是否写入成功（可能需要等待KV最终一致性）
+		let verifyTokenList = await env.KV.get('TOKEN_LIST');
+		let retryCount = 0;
+		while ((!verifyTokenList || !verifyTokenList.includes(trimmedToken)) && retryCount < 3) {
+			console.log(`TOKEN_LIST验证重试 ${retryCount + 1}/3`);
+			await new Promise(resolve => setTimeout(resolve, 100)); // 等待100ms
+			verifyTokenList = await env.KV.get('TOKEN_LIST');
+			retryCount++;
+		}
+		
+		if (!verifyTokenList || !verifyTokenList.includes(trimmedToken)) {
+			console.error(`TOKEN_LIST写入验证失败 - Expected: ${trimmedToken}, Got: ${verifyTokenList}`);
+			return new Response("创建失败: TOKEN_LIST写入失败", { status: 500 });
+		}
+		
+		console.log(`TOKEN_LIST写入成功: ${verifyTokenList}`);
 		
 		// 创建空的订阅数据
-		await env.KV.put(`LINK_${newToken.trim()}.txt`, '');
+		const linkKey = `LINK_${trimmedToken}.txt`;
+		console.log(`准备写入LINK文件: ${linkKey}`);
+		await env.KV.put(linkKey, '');
 		
+		// 验证LINK文件是否写入成功
+		let verifyLink = await env.KV.get(linkKey);
+		retryCount = 0;
+		while (verifyLink === null && retryCount < 3) {
+			console.log(`LINK文件验证重试 ${retryCount + 1}/3`);
+			await new Promise(resolve => setTimeout(resolve, 100)); // 等待100ms
+			verifyLink = await env.KV.get(linkKey);
+			retryCount++;
+		}
+		
+		if (verifyLink === null) {
+			console.error(`LINK文件写入验证失败 - Key: ${linkKey}`);
+			return new Response("创建失败: LINK文件写入失败", { status: 500 });
+		}
+		
+		console.log(`订阅创建成功: ${trimmedToken}, LINK文件: ${linkKey}`);
 		return new Response("订阅创建成功");
 	} catch (error) {
 		console.error('创建订阅时发生错误:', error);
@@ -631,11 +680,16 @@ async function manageSubscriptions(request, env, mytoken, url) {
 		const tokenList = await env.KV.get('TOKEN_LIST') || '';
 		const tokens = tokenList.split('\n').filter(t => t.trim());
 		
+		console.log('管理界面 - TOKEN_LIST:', tokenList);
+		console.log('管理界面 - 解析后的tokens:', tokens);
+		
 		let subscriptionsHtml = '';
 		if (tokens.length > 0) {
 			// 获取每个token的LINK内容
 			const tokenLinks = await Promise.all(tokens.map(async token => {
-				const linkContent = await env.KV.get(`LINK_${token}.txt`) || '';
+				const linkKey = `LINK_${token}.txt`;
+				const linkContent = await env.KV.get(linkKey) || '';
+				console.log(`管理界面 - Token: ${token}, LinkKey: ${linkKey}, ContentLength: ${linkContent.length}`);
 				return { token, linkContent };
 			}));
 			
