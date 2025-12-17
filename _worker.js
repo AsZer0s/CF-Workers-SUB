@@ -114,6 +114,14 @@ export default {
 					} else if (action === 'delete') {
 						const delToken = await request.text();
 						return await deleteSubscription(env, delToken.trim());
+					} else if (action === 'saveLink') {
+						const token = url.searchParams.get('token');
+						const linkContent = await request.text();
+						if (token) {
+							await env.KV.put(`LINK_${token}.txt`, linkContent);
+							return new Response("LINK保存成功");
+						}
+						return new Response("Token不能为空", { status: 400 });
 					}
 				}
 				
@@ -625,13 +633,43 @@ async function manageSubscriptions(request, env, mytoken, url) {
 		
 		let subscriptionsHtml = '';
 		if (tokens.length > 0) {
-			subscriptionsHtml = tokens.map(token => {
+			// 获取每个token的LINK内容
+			const tokenLinks = await Promise.all(tokens.map(async token => {
+				const linkContent = await env.KV.get(`LINK_${token}.txt`) || '';
+				return { token, linkContent };
+			}));
+			
+			subscriptionsHtml = tokenLinks.map(({ token, linkContent }) => {
+				const hasLink = linkContent.trim().length > 0;
+				// HTML转义，防止XSS和模板字符串问题
+				const escapedLinkContent = linkContent
+					.replace(/&/g, '&amp;')
+					.replace(/</g, '&lt;')
+					.replace(/>/g, '&gt;')
+					.replace(/"/g, '&quot;')
+					.replace(/'/g, '&#39;');
 				return `
-					<div style="border: 1px solid #ccc; padding: 10px; margin: 10px 0; border-radius: 4px; background: #f9f9f9;">
-						<strong>Token: ${token}</strong><br>
-						订阅地址: <a href="https://${url.hostname}/${token}" target="_blank">https://${url.hostname}/${token}</a><br>
-						编辑地址: <a href="https://${url.hostname}/${token}" target="_blank" style="color: #1976D2;">点击编辑</a><br>
-						<button onclick="deleteSub('${token}')" style="background: #f44336; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 5px;">删除</button>
+					<div style="border: 1px solid #ccc; padding: 15px; margin: 10px 0; border-radius: 4px; background: #f9f9f9;">
+						<strong>Token: ${token}</strong><br><br>
+						<div id="linkInput_${token}" style="${hasLink ? 'display: none;' : ''}">
+							<label style="display: block; margin-bottom: 5px; font-weight: bold;">输入LINK（节点链接或订阅链接，每行一个）:</label>
+							<textarea id="linkContent_${token}" rows="5" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; box-sizing: border-box;" placeholder="vless://...&#10;vmess://...&#10;https://sub.example.com">${escapedLinkContent}</textarea>
+							<button onclick="saveLink('${token}')" style="background: #4CAF50; color: white; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; margin-top: 5px;">保存LINK</button>
+							<span id="saveStatus_${token}" style="margin-left: 10px;"></span>
+						</div>
+						<div id="linkDisplay_${token}" style="${hasLink ? '' : 'display: none;'}">
+							<strong>订阅链接:</strong><br>
+							<div style="background: #fff; padding: 10px; margin: 5px 0; border-radius: 4px; border: 1px solid #ddd;">
+								自适应: <a href="https://${url.hostname}/${token}" target="_blank" style="color: #1976D2;">https://${url.hostname}/${token}</a><br>
+								Base64: <a href="https://${url.hostname}/${token}?b64" target="_blank" style="color: #1976D2;">https://${url.hostname}/${token}?b64</a><br>
+								Clash: <a href="https://${url.hostname}/${token}?clash" target="_blank" style="color: #1976D2;">https://${url.hostname}/${token}?clash</a><br>
+								SingBox: <a href="https://${url.hostname}/${token}?sb" target="_blank" style="color: #1976D2;">https://${url.hostname}/${token}?sb</a><br>
+								Surge: <a href="https://${url.hostname}/${token}?surge" target="_blank" style="color: #1976D2;">https://${url.hostname}/${token}?surge</a><br>
+								Loon: <a href="https://${url.hostname}/${token}?loon" target="_blank" style="color: #1976D2;">https://${url.hostname}/${token}?loon</a>
+							</div>
+							<button onclick="editLink('${token}')" style="background: #2196F3; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 5px;">编辑LINK</button>
+							<button onclick="deleteSub('${token}')" style="background: #f44336; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 5px; margin-left: 5px;">删除订阅</button>
+						</div>
 					</div>
 				`;
 			}).join('');
@@ -710,6 +748,12 @@ async function manageSubscriptions(request, env, mytoken, url) {
 						.back-link:hover {
 							color: #000;
 						}
+						.link-input-section {
+							margin-top: 10px;
+						}
+						.link-display-section {
+							margin-top: 10px;
+						}
 					</style>
 				</head>
 				<body>
@@ -755,13 +799,13 @@ async function manageSubscriptions(request, env, mytoken, url) {
 								
 								const result = await response.text();
 								if (response.ok) {
-									statusElem.textContent = '创建成功！正在跳转...';
+									statusElem.textContent = '创建成功！';
 									statusElem.style.color = '#4CAF50';
 									const tokenValue = newToken;
 									document.getElementById('newToken').value = '';
-									// 跳转到新token的编辑界面
+									// 刷新页面显示新token的输入框
 									setTimeout(() => {
-										window.location.href = window.location.protocol + '//' + window.location.hostname + '/' + tokenValue;
+										location.reload();
 									}, 500);
 								} else {
 									statusElem.textContent = '创建失败: ' + result;
@@ -771,6 +815,46 @@ async function manageSubscriptions(request, env, mytoken, url) {
 								statusElem.textContent = '创建失败: ' + error.message;
 								statusElem.style.color = '#f44336';
 							}
+						}
+						
+						async function saveLink(token) {
+							const linkContent = document.getElementById('linkContent_' + token).value;
+							const statusElem = document.getElementById('saveStatus_' + token);
+							
+							statusElem.textContent = '保存中...';
+							statusElem.style.color = '#666';
+							
+							try {
+								const response = await fetch(window.location.href + '&action=saveLink&token=' + token, {
+									method: 'POST',
+									body: linkContent,
+									headers: {
+										'Content-Type': 'text/plain;charset=UTF-8'
+									}
+								});
+								
+								const result = await response.text();
+								if (response.ok) {
+									statusElem.textContent = '保存成功！';
+									statusElem.style.color = '#4CAF50';
+									// 隐藏输入框，显示链接
+									document.getElementById('linkInput_' + token).style.display = 'none';
+									document.getElementById('linkDisplay_' + token).style.display = 'block';
+								} else {
+									statusElem.textContent = '保存失败: ' + result;
+									statusElem.style.color = '#f44336';
+								}
+							} catch (error) {
+								statusElem.textContent = '保存失败: ' + error.message;
+								statusElem.style.color = '#f44336';
+							}
+						}
+						
+						function editLink(token) {
+							// 显示输入框，隐藏链接显示
+							document.getElementById('linkInput_' + token).style.display = 'block';
+							document.getElementById('linkDisplay_' + token).style.display = 'none';
+							// textarea中已经有内容了（服务端渲染时填充的）
 						}
 						
 						async function deleteSub(token) {
