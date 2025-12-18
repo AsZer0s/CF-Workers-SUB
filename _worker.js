@@ -39,17 +39,8 @@ export default {
 			subConverter = subConverter.split("//")[1] || subConverter;
 		}
 		subConfig = env.SUBCONFIG || subConfig;
-		// 优先从KV读取SUBNAME，其次从环境变量，最后使用默认值
-		if (env.KV) {
-			const kvSubName = await env.KV.get('SUBNAME');
-			if (kvSubName) {
-				FileName = kvSubName;
-			} else {
-				FileName = env.SUBNAME || FileName;
-			}
-		} else {
-			FileName = env.SUBNAME || FileName;
-		}
+		// SUBNAME将在后面根据token从KV读取
+		FileName = env.SUBNAME || FileName;
 
 		const currentDate = new Date();
 		currentDate.setHours(0, 0, 0, 0);
@@ -109,6 +100,20 @@ export default {
 			}
 			const isMainToken = currentToken === mytoken;
 			
+			// 根据token从KV读取对应的SUBNAME
+			if (env.KV) {
+				const tokenSubName = await env.KV.get(`SUBNAME_${currentToken}`);
+				if (tokenSubName) {
+					FileName = tokenSubName;
+				} else if (isMainToken) {
+					// 主token可以读取全局SUBNAME作为后备
+					const globalSubName = await env.KV.get('SUBNAME');
+					if (globalSubName) {
+						FileName = globalSubName;
+					}
+				}
+			}
+			
 			if (env.KV) {
 				// 优先处理POST请求的action（创建/删除/保存）
 				if (isMainToken && request.method === 'POST' && url.searchParams.has('action')) {
@@ -139,17 +144,22 @@ export default {
 						}
 						return new Response("Token不能为空", { status: 400 });
 					} else if (action === 'saveSubName') {
+						const token = url.searchParams.get('token');
 						const subName = await request.text();
+						if (!token) {
+							return new Response("Token不能为空", { status: 400 });
+						}
 						if (subName && subName.trim()) {
-							console.log(`保存SUBNAME: ${subName.trim()}`);
-							await env.KV.put('SUBNAME', subName.trim());
+							const subNameKey = `SUBNAME_${token}`;
+							console.log(`保存SUBNAME - Token: ${token}, Key: ${subNameKey}, Value: ${subName.trim()}`);
+							await env.KV.put(subNameKey, subName.trim());
 							// 验证保存是否成功
-							const verify = await env.KV.get('SUBNAME');
+							const verify = await env.KV.get(subNameKey);
 							if (verify === null) {
-								console.error('SUBNAME保存验证失败');
+								console.error(`SUBNAME保存验证失败 - Token: ${token}`);
 								return new Response("SUBNAME保存失败: 验证失败", { status: 500 });
 							}
-							console.log(`SUBNAME保存成功: ${verify}`);
+							console.log(`SUBNAME保存成功 - Token: ${token}, Value: ${verify}`);
 							return new Response("SUBNAME保存成功");
 						}
 						return new Response("SUBNAME不能为空", { status: 400 });
@@ -718,8 +728,9 @@ async function deleteSubscription(env, delToken) {
 		const newTokens = tokens.filter(t => t !== delToken.trim());
 		await env.KV.put('TOKEN_LIST', newTokens.join('\n'));
 		
-		// 删除订阅数据
+		// 删除订阅数据和SUBNAME
 		await env.KV.delete(`LINK_${delToken.trim()}.txt`);
+		await env.KV.delete(`SUBNAME_${delToken.trim()}`);
 		
 		return new Response("订阅删除成功");
 	} catch (error) {
@@ -747,15 +758,17 @@ async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Wo
 		
 		let subscriptionsHtml = '';
 		if (tokens.length > 0) {
-			// 获取每个token的LINK内容
+			// 获取每个token的LINK内容和SUBNAME
 			const tokenLinks = await Promise.all(tokens.map(async token => {
 				const linkKey = `LINK_${token}.txt`;
 				const linkContent = await env.KV.get(linkKey) || '';
-				console.log(`管理界面 - Token: ${token}, LinkKey: ${linkKey}, ContentLength: ${linkContent.length}`);
-				return { token, linkContent };
+				const subNameKey = `SUBNAME_${token}`;
+				const subName = await env.KV.get(subNameKey) || '';
+				console.log(`管理界面 - Token: ${token}, LinkKey: ${linkKey}, ContentLength: ${linkContent.length}, SubName: ${subName}`);
+				return { token, linkContent, subName };
 			}));
 			
-			subscriptionsHtml = tokenLinks.map(({ token, linkContent }) => {
+			subscriptionsHtml = tokenLinks.map(({ token, linkContent, subName }) => {
 				const hasLink = linkContent.trim().length > 0;
 				// HTML转义，防止XSS和模板字符串问题
 				const escapedLinkContent = linkContent
@@ -764,9 +777,21 @@ async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Wo
 					.replace(/>/g, '&gt;')
 					.replace(/"/g, '&quot;')
 					.replace(/'/g, '&#39;');
+				const escapedSubName = subName
+					.replace(/&/g, '&amp;')
+					.replace(/</g, '&lt;')
+					.replace(/>/g, '&gt;')
+					.replace(/"/g, '&quot;')
+					.replace(/'/g, '&#39;');
 				return `
 					<div style="border: 1px solid #ccc; padding: 15px; margin: 10px 0; border-radius: 4px; background: #f9f9f9;">
 						<strong>Token: ${token}</strong><br><br>
+						<div style="margin-bottom: 15px;">
+							<label style="display: block; margin-bottom: 5px; font-weight: bold;">订阅名称（SUBNAME）:</label>
+							<input type="text" id="subName_${token}" value="${escapedSubName}" placeholder="输入订阅名称" style="width: 300px; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; margin-right: 10px;">
+							<button onclick="saveSubName('${token}')" style="background: #2196F3; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">保存名称</button>
+							<span id="subNameStatus_${token}" style="margin-left: 10px;"></span>
+						</div>
 						<div id="linkInput_${token}" style="${hasLink ? 'display: none;' : ''}">
 							<label style="display: block; margin-bottom: 5px; font-weight: bold;">输入LINK（节点链接或订阅链接，每行一个）:</label>
 							<textarea id="linkContent_${token}" rows="5" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; box-sizing: border-box;" placeholder="vless://...&#10;vmess://...&#10;https://sub.example.com">${escapedLinkContent}</textarea>
@@ -880,16 +905,6 @@ async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Wo
 							提示：Token不能与主管理Token相同，不能包含特殊字符（/、?、&、#）
 						</p>
 						
-						<div class="create-section" style="margin-bottom: 20px;">
-							<h3>设置订阅名称（SUBNAME）</h3>
-							<input type="text" id="subName" class="create-input" value="${currentSubName}" placeholder="输入订阅名称">
-							<button class="create-btn" onclick="saveSubName()">保存名称</button>
-							<span id="subNameStatus" style="margin-left: 10px;"></span>
-							<p style="color: #666; font-size: 12px; margin-top: 5px;">
-								订阅名称将显示在订阅文件的文件名中
-							</p>
-						</div>
-						
 						<div class="create-section">
 							<h3>创建新订阅</h3>
 							<input type="text" id="newToken" class="create-input" placeholder="输入新的Token名称（不能与主Token冲突）">
@@ -906,19 +921,15 @@ async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Wo
 					</div>
 					
 					<script>
-						async function saveSubName() {
-							const subName = document.getElementById('subName').value.trim();
-							if (!subName) {
-								alert('请输入订阅名称');
-								return;
-							}
+						async function saveSubName(token) {
+							const subName = document.getElementById('subName_' + token).value.trim();
+							const statusElem = document.getElementById('subNameStatus_' + token);
 							
-							const statusElem = document.getElementById('subNameStatus');
 							statusElem.textContent = '保存中...';
 							statusElem.style.color = '#666';
 							
 							try {
-								const response = await fetch(window.location.href + '&action=saveSubName', {
+								const response = await fetch(window.location.href + '&action=saveSubName&token=' + token, {
 									method: 'POST',
 									body: subName,
 									headers: {
@@ -930,8 +941,6 @@ async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Wo
 								if (response.ok) {
 									statusElem.textContent = '保存成功！';
 									statusElem.style.color = '#4CAF50';
-									// 更新页面标题
-									document.querySelector('h2').textContent = subName + ' 订阅管理';
 								} else {
 									statusElem.textContent = '保存失败: ' + result;
 									statusElem.style.color = '#f44336';
@@ -989,6 +998,12 @@ async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Wo
 									const newTokenHtml = \`
 										<div style="border: 1px solid #ccc; padding: 15px; margin: 10px 0; border-radius: 4px; background: #f9f9f9;">
 											<strong>Token: \${tokenValue}</strong><br><br>
+											<div style="margin-bottom: 15px;">
+												<label style="display: block; margin-bottom: 5px; font-weight: bold;">订阅名称（SUBNAME）:</label>
+												<input type="text" id="subName_\${tokenValue}" value="" placeholder="输入订阅名称" style="width: 300px; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; margin-right: 10px;">
+												<button onclick="saveSubName('\${tokenValue}')" style="background: #2196F3; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">保存名称</button>
+												<span id="subNameStatus_\${tokenValue}" style="margin-left: 10px;"></span>
+											</div>
 											<div id="linkInput_\${tokenValue}" style="">
 												<label style="display: block; margin-bottom: 5px; font-weight: bold;">输入LINK（节点链接或订阅链接，每行一个）:</label>
 												<textarea id="linkContent_\${tokenValue}" rows="5" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; box-sizing: border-box;" placeholder="vless://...&#10;vmess://...&#10;https://sub.example.com"></textarea>
@@ -1066,6 +1081,36 @@ async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Wo
 							document.getElementById('linkInput_' + token).style.display = 'block';
 							document.getElementById('linkDisplay_' + token).style.display = 'none';
 							// textarea中已经有内容了（服务端渲染时填充的）
+						}
+						
+						async function saveSubName(token) {
+							const subName = document.getElementById('subName_' + token).value.trim();
+							const statusElem = document.getElementById('subNameStatus_' + token);
+							
+							statusElem.textContent = '保存中...';
+							statusElem.style.color = '#666';
+							
+							try {
+								const response = await fetch(window.location.href + '&action=saveSubName&token=' + token, {
+									method: 'POST',
+									body: subName,
+									headers: {
+										'Content-Type': 'text/plain;charset=UTF-8'
+									}
+								});
+								
+								const result = await response.text();
+								if (response.ok) {
+									statusElem.textContent = '保存成功！';
+									statusElem.style.color = '#4CAF50';
+								} else {
+									statusElem.textContent = '保存失败: ' + result;
+									statusElem.style.color = '#f44336';
+								}
+							} catch (error) {
+								statusElem.textContent = '保存失败: ' + error.message;
+								statusElem.style.color = '#f44336';
+							}
 						}
 						
 						async function deleteSub(token) {
