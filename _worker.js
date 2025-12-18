@@ -166,8 +166,8 @@ export default {
 					}
 				}
 				
-				// 处理管理界面的GET请求
-				if (isMainToken && userAgent.includes('mozilla') && url.searchParams.has('manage') && request.method === 'GET') {
+				// 处理管理界面的GET和POST请求（包括密码验证）
+				if (isMainToken && userAgent.includes('mozilla') && url.searchParams.has('manage')) {
 					return await manageSubscriptions(request, env, mytoken, url, FileName);
 				}
 				
@@ -743,6 +743,192 @@ async function deleteSubscription(env, delToken) {
 async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Workers-SUB') {
 	if (!env.KV) {
 		return new Response("未绑定KV空间", { status: 400 });
+	}
+	
+	// 获取密码（从环境变量读取，默认值为 AsZer0s）
+	const correctPassword = env.PASSWD || 'AsZer0s';
+	
+	// 处理密码验证POST请求
+	if (request.method === 'POST' && url.searchParams.has('checkPasswd')) {
+		const providedPassword = await request.text();
+		if (providedPassword.trim() === correctPassword) {
+			// 密码正确，重定向到管理页面（带密码参数）
+			const manageUrl = new URL(url);
+			manageUrl.searchParams.set('passwd', correctPassword);
+			return Response.redirect(manageUrl.toString(), 302);
+		} else {
+			// 密码错误
+			return new Response(`
+				<!DOCTYPE html>
+				<html>
+				<head>
+					<meta charset="UTF-8">
+					<title>密码错误</title>
+					<style>
+						body {
+							font-family: Arial, sans-serif;
+							display: flex;
+							justify-content: center;
+							align-items: center;
+							height: 100vh;
+							margin: 0;
+							background: #f5f5f5;
+						}
+						.container {
+							background: white;
+							padding: 30px;
+							border-radius: 8px;
+							box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+							text-align: center;
+						}
+						.error {
+							color: #f44336;
+							margin-bottom: 20px;
+						}
+						button {
+							background: #2196F3;
+							color: white;
+							border: none;
+							padding: 10px 20px;
+							border-radius: 4px;
+							cursor: pointer;
+							font-size: 14px;
+						}
+						button:hover {
+							background: #1976D2;
+						}
+					</style>
+				</head>
+				<body>
+					<div class="container">
+						<div class="error">密码错误，请重试</div>
+						<button onclick="window.history.back()">返回</button>
+					</div>
+				</body>
+				</html>
+			`, {
+				headers: { 'Content-Type': 'text/html; charset=UTF-8' }
+			});
+		}
+	}
+	
+	// 检查密码（从URL参数获取）
+	const providedPasswd = url.searchParams.get('passwd');
+	if (providedPasswd !== correctPassword) {
+		// 密码错误或未提供，显示密码输入页面
+		return new Response(`
+			<!DOCTYPE html>
+			<html>
+			<head>
+				<meta charset="UTF-8">
+				<title>管理界面 - 密码验证</title>
+				<style>
+					body {
+						font-family: Arial, sans-serif;
+						display: flex;
+						justify-content: center;
+						align-items: center;
+						height: 100vh;
+						margin: 0;
+						background: #f5f5f5;
+					}
+					.container {
+						background: white;
+						padding: 40px;
+						border-radius: 8px;
+						box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+						text-align: center;
+						min-width: 300px;
+					}
+					h2 {
+						margin-top: 0;
+						color: #333;
+					}
+					input {
+						width: 100%;
+						padding: 12px;
+						margin: 15px 0;
+						border: 1px solid #ddd;
+						border-radius: 4px;
+						font-size: 14px;
+						box-sizing: border-box;
+					}
+					button {
+						width: 100%;
+						background: #2196F3;
+						color: white;
+						border: none;
+						padding: 12px;
+						border-radius: 4px;
+						cursor: pointer;
+						font-size: 14px;
+						font-weight: bold;
+					}
+					button:hover {
+						background: #1976D2;
+					}
+					.error {
+						color: #f44336;
+						margin-top: 10px;
+						font-size: 12px;
+					}
+				</style>
+			</head>
+			<body>
+				<div class="container">
+					<h2>管理界面密码验证</h2>
+					<form id="passwdForm" onsubmit="return false;">
+						<input type="password" id="passwd" placeholder="请输入密码" autofocus>
+						<button onclick="checkPassword()">验证</button>
+						<div id="errorMsg" class="error" style="display: none;"></div>
+					</form>
+				</div>
+				<script>
+					function checkPassword() {
+						const passwd = document.getElementById('passwd').value;
+						const errorMsg = document.getElementById('errorMsg');
+						
+						if (!passwd) {
+							errorMsg.textContent = '请输入密码';
+							errorMsg.style.display = 'block';
+							return;
+						}
+						
+						// 提交密码验证
+						fetch(window.location.href + '&checkPasswd=1', {
+							method: 'POST',
+							body: passwd,
+							headers: {
+								'Content-Type': 'text/plain;charset=UTF-8'
+							}
+						}).then(response => {
+							if (response.redirected) {
+								window.location.href = response.url;
+							} else {
+								return response.text();
+							}
+						}).then(html => {
+							if (html) {
+								document.body.innerHTML = html;
+							}
+						}).catch(error => {
+							errorMsg.textContent = '验证失败: ' + error.message;
+							errorMsg.style.display = 'block';
+						});
+					}
+					
+					// 按Enter键提交
+					document.getElementById('passwd').addEventListener('keypress', function(e) {
+						if (e.key === 'Enter') {
+							checkPassword();
+						}
+					});
+				</script>
+			</body>
+			</html>
+		`, {
+			headers: { 'Content-Type': 'text/html; charset=UTF-8' }
+		});
 	}
 	
 	try {
