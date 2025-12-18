@@ -39,7 +39,17 @@ export default {
 			subConverter = subConverter.split("//")[1] || subConverter;
 		}
 		subConfig = env.SUBCONFIG || subConfig;
-		FileName = env.SUBNAME || FileName;
+		// 优先从KV读取SUBNAME，其次从环境变量，最后使用默认值
+		if (env.KV) {
+			const kvSubName = await env.KV.get('SUBNAME');
+			if (kvSubName) {
+				FileName = kvSubName;
+			} else {
+				FileName = env.SUBNAME || FileName;
+			}
+		} else {
+			FileName = env.SUBNAME || FileName;
+		}
 
 		const currentDate = new Date();
 		currentDate.setHours(0, 0, 0, 0);
@@ -128,12 +138,27 @@ export default {
 							return new Response("LINK保存成功");
 						}
 						return new Response("Token不能为空", { status: 400 });
+					} else if (action === 'saveSubName') {
+						const subName = await request.text();
+						if (subName && subName.trim()) {
+							console.log(`保存SUBNAME: ${subName.trim()}`);
+							await env.KV.put('SUBNAME', subName.trim());
+							// 验证保存是否成功
+							const verify = await env.KV.get('SUBNAME');
+							if (verify === null) {
+								console.error('SUBNAME保存验证失败');
+								return new Response("SUBNAME保存失败: 验证失败", { status: 500 });
+							}
+							console.log(`SUBNAME保存成功: ${verify}`);
+							return new Response("SUBNAME保存成功");
+						}
+						return new Response("SUBNAME不能为空", { status: 400 });
 					}
 				}
 				
 				// 处理管理界面的GET请求
 				if (isMainToken && userAgent.includes('mozilla') && url.searchParams.has('manage') && request.method === 'GET') {
-					return await manageSubscriptions(request, env, mytoken, url);
+					return await manageSubscriptions(request, env, mytoken, url, FileName);
 				}
 				
 				// WebUI界面（浏览器访问）- 只有主token显示WebUI编辑界面
@@ -704,7 +729,7 @@ async function deleteSubscription(env, delToken) {
 }
 
 // 管理订阅界面
-async function manageSubscriptions(request, env, mytoken, url) {
+async function manageSubscriptions(request, env, mytoken, url, FileName = 'CF-Workers-SUB') {
 	if (!env.KV) {
 		return new Response("未绑定KV空间", { status: 400 });
 	}
@@ -713,8 +738,12 @@ async function manageSubscriptions(request, env, mytoken, url) {
 		const tokenList = await env.KV.get('TOKEN_LIST') || '';
 		const tokens = tokenList.split('\n').filter(t => t.trim());
 		
+		// 获取当前SUBNAME（优先从KV读取，其次从环境变量，最后使用默认值）
+		const currentSubName = await env.KV.get('SUBNAME') || env.SUBNAME || FileName;
+		
 		console.log('管理界面 - TOKEN_LIST:', tokenList);
 		console.log('管理界面 - 解析后的tokens:', tokens);
+		console.log('管理界面 - SUBNAME:', currentSubName);
 		
 		let subscriptionsHtml = '';
 		if (tokens.length > 0) {
@@ -851,6 +880,16 @@ async function manageSubscriptions(request, env, mytoken, url) {
 							提示：Token不能与主管理Token相同，不能包含特殊字符（/、?、&、#）
 						</p>
 						
+						<div class="create-section" style="margin-bottom: 20px;">
+							<h3>设置订阅名称（SUBNAME）</h3>
+							<input type="text" id="subName" class="create-input" value="${currentSubName}" placeholder="输入订阅名称">
+							<button class="create-btn" onclick="saveSubName()">保存名称</button>
+							<span id="subNameStatus" style="margin-left: 10px;"></span>
+							<p style="color: #666; font-size: 12px; margin-top: 5px;">
+								订阅名称将显示在订阅文件的文件名中
+							</p>
+						</div>
+						
 						<div class="create-section">
 							<h3>创建新订阅</h3>
 							<input type="text" id="newToken" class="create-input" placeholder="输入新的Token名称（不能与主Token冲突）">
@@ -867,6 +906,42 @@ async function manageSubscriptions(request, env, mytoken, url) {
 					</div>
 					
 					<script>
+						async function saveSubName() {
+							const subName = document.getElementById('subName').value.trim();
+							if (!subName) {
+								alert('请输入订阅名称');
+								return;
+							}
+							
+							const statusElem = document.getElementById('subNameStatus');
+							statusElem.textContent = '保存中...';
+							statusElem.style.color = '#666';
+							
+							try {
+								const response = await fetch(window.location.href + '&action=saveSubName', {
+									method: 'POST',
+									body: subName,
+									headers: {
+										'Content-Type': 'text/plain;charset=UTF-8'
+									}
+								});
+								
+								const result = await response.text();
+								if (response.ok) {
+									statusElem.textContent = '保存成功！';
+									statusElem.style.color = '#4CAF50';
+									// 更新页面标题
+									document.querySelector('h2').textContent = subName + ' 订阅管理';
+								} else {
+									statusElem.textContent = '保存失败: ' + result;
+									statusElem.style.color = '#f44336';
+								}
+							} catch (error) {
+								statusElem.textContent = '保存失败: ' + error.message;
+								statusElem.style.color = '#f44336';
+							}
+						}
+						
 						async function createSub() {
 							const newToken = document.getElementById('newToken').value.trim();
 							if (!newToken) {
